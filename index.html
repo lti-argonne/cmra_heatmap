@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="initial-scale=1.0, user-scalable=no" />
+  <title>CMRA — Heatmap + Iso-densité (23k points)</title>
+
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    html, body { height: 100%; margin: 0; }
+    #map { height: 100%; width: 100%; }
+
+    .toolbar {
+      position: absolute; top: 10px; left: 10px; z-index: 9999;
+      background: rgba(255, 255, 255, 0.92);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      font-size: 13px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.12);
+      max-width: 380px;
+    }
+
+    .toolbar label { display: block; margin: 6px 0 2px; }
+    .toolbar input[type="range"] { width: 100%; }
+
+    .toolbar .row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 8px;
+    }
+
+    .toolbar button {
+      padding: 6px 10px;
+      border-radius: 8px;
+      border: 1px solid #ccc;
+      background: #fff;
+      cursor: pointer;
+    }
+
+    .toolbar small {
+      color: #555;
+      display: block;
+      margin-top: 8px;
+      line-height: 1.25;
+    }
+
+    .stat { margin-top: 6px; color: #333; }
+  </style>
+</head>
+
+<body>
+  <div class="toolbar">
+    <div><b>CMRA — heatmap + iso-densité</b></div>
+
+    <label for="bgOpacity">Opacité fond</label>
+    <input id="bgOpacity" type="range" min="0" max="1" step="0.05" value="0.65" />
+
+    <label for="heatRadius">Rayon heatmap</label>
+    <input id="heatRadius" type="range" min="6" max="50" step="1" value="18" />
+
+    <label for="cellKm">Pas grille densité (km)</label>
+    <input id="cellKm" type="range" min="5" max="80" step="1" value="20" />
+
+    <label for="sigma">Lissage (sigma, en cellules)</label>
+    <input id="sigma" type="range" min="0" max="4" step="0.5" value="2" />
+
+    <label for="isoColor">Couleur isolignes</label>
+    <input id="isoColor" type="color" value="#6fe7ff" />
+
+    <div class="row">
+      <button id="rebuild" type="button">Recalculer iso-densité</button>
+      <button id="exportPng" type="button">Exporter PNG (HD)</button>
+    </div>
+
+    <div class="stat" id="stat">Chargement…</div>
+
+    <small>
+      Ouvre via un serveur local (sinon le fetch du CSV est bloqué).<br/>
+      Exemple : <code>python3 -m http.server 8001</code> puis http://localhost:8001
+    </small>
+  </div>
+
+  <div id="map"></div>
+
+  <!-- Libs -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
+  <script src="https://unpkg.com/d3-contour@4"></script>
+
+  <!-- Export (screenshoter + dom-to-image-more) -->
+  <script src="https://unpkg.com/dom-to-image-more@2.16.0/dist/dom-to-image-more.min.js"></script>
+  <script src="https://unpkg.com/leaflet-simple-map-screenshoter@0.5.0/dist/leaflet-simple-map-screenshoter.js"></script>
+
+  <script>
+    // -------------------------------------------------------------------------
+    // Config générale
+    // -------------------------------------------------------------------------
+    const mapBounds = L.latLngBounds(
+      L.latLng(-0.00038285, -16.25),
+      L.latLng(69.99997914, 60.00076508)
+    );
+
+    const mapMinZoom = 1;
+    const mapMaxZoom = 14;
+
+    // Styles iso (scope global !)
+    let ISO_COLOR = "#6fe7ff";
+    let ISO_OPACITY = 0.9;
+    let ISO_WEIGHT = 1.1;
+
+    // Layers
+    let heatLayer = null;
+    let isoLayer = null;
+    let cachedPoints = [];
+
+    const statEl = document.getElementById("stat");
+
+    // -------------------------------------------------------------------------
+    // Map init
+    // -------------------------------------------------------------------------
+    const map = L.map("map", { zoomDelta: 0.5, zoomSnap: 0 })
+      .setView([48.84664, 2.36481], 5.75);
+
+    const hillshade = L.tileLayer(
+      "https://corpus-argonne-fond.netlify.app/hillshade/{z}/{x}/{y}.png",
+      {
+        minZoom: mapMinZoom,
+        maxZoom: mapMaxZoom,
+        bounds: mapBounds,
+        attribution: "Tiles: DARE (Ahlfeldt) — miroir Netlify",
+        // crossOrigin: true, // utile parfois pour export, mais dépend aussi du serveur
+      }
+    ).addTo(map);
+
+    const background = L.tileLayer(
+      "https://corpus-argonne-fond.netlify.app/background/{z}/{x}/{y}.jpg",
+      {
+        minZoom: mapMinZoom,
+        maxZoom: mapMaxZoom,
+        bounds: mapBounds,
+        opacity: 0.65,
+        // crossOrigin: true,
+      }
+    ).addTo(map);
+
+    L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
+
+    // Screenshoter (ATTENTION: constructeur = L.simpleMapScreenshoter)
+    const screenshoter = new L.simpleMapScreenshoter({
+      hidden: true,
+      preventDownload: true
+      // domtoimage: domtoimage // optionnel, plugin détecte souvent tout seul
+    }).addTo(map);
+
+    // -------------------------------------------------------------------------
+    // UI bindings
+    // -------------------------------------------------------------------------
+    document.getElementById("bgOpacity").addEventListener("input", (e) => {
+      background.setOpacity(parseFloat(e.target.value));
+    });
+
+    document.getElementById("heatRadius").addEventListener("input", () => {
+      drawHeat(cachedPoints);
+    });
+
+    document.getElementById("isoColor").addEventListener("input", (e) => {
+      ISO_COLOR = e.target.value;
+      if (isoLayer) isoLayer.setStyle({ color: ISO_COLOR });
+    });
+
+    document.getElementById("rebuild").addEventListener("click", () => {
+      rebuildIsodensity(cachedPoints);
+    });
+
+    document.getElementById("exportPng").addEventListener("click", () => {
+      exportMapPNG();
+    });
+
+    // -------------------------------------------------------------------------
+    // CSV parsing
+    // -------------------------------------------------------------------------
+    function isValidLatLng(lat, lon) {
+      return (
+        typeof lat === "number" && typeof lon === "number" &&
+        isFinite(lat) && isFinite(lon) &&
+        lat >= -90 && lat <= 90 &&
+        lon >= -180 && lon <= 180
+      );
+    }
+
+    function parseCSV(text) {
+      const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      if (lines.length < 2) return [];
+
+      const header = lines[0].split(",").map(s => s.trim().toLowerCase());
+
+      // Tolérant: lat/lon OU LAT/LON
+      const latIdx = header.indexOf("lat");
+      const lonIdx = header.indexOf("lon");
+
+      if (latIdx < 0 || lonIdx < 0) {
+        throw new Error("CSV: colonnes lat/lon introuvables (attendu: LAT,LON ou lat,lon).");
+      }
+
+      const out = [];
+
+      for (let i = 1; i < lines.length; i++) {
+        const parts = lines[i].split(",").map(s => s.trim());
+        const lat = Number(parts[latIdx]);
+        const lon = Number(parts[lonIdx]);
+        if (isValidLatLng(lat, lon)) out.push({ lat, lon });
+      }
+
+      return out;
+    }
+
+    // -------------------------------------------------------------------------
+    // Heatmap
+    // -------------------------------------------------------------------------
+    function drawHeat(points) {
+      if (!points || !points.length) return;
+
+      if (heatLayer) map.removeLayer(heatLayer);
+
+      const radius = Number(document.getElementById("heatRadius").value);
+      const heatData = points.map(p => [p.lat, p.lon, 1]); // poids=1
+
+      heatLayer = L.heatLayer(heatData, {
+        radius,
+        blur: 22,
+        maxZoom: 10
+      }).addTo(map);
+    }
+
+    // -------------------------------------------------------------------------
+    // Iso-densité (grille + lissage + d3-contour)
+    // -------------------------------------------------------------------------
+    function kmToDegLat(km) { return km / 110.574; }
+    function kmToDegLon(km, latDeg) { return km / (111.320 * Math.cos(latDeg * Math.PI / 180)); }
+
+    function gaussianKernel1D(sigma) {
+      if (sigma <= 0) return { k: [1], r: 0 };
+
+      const r = Math.max(1, Math.round(sigma * 3));
+      const k = [];
+      let sum = 0;
+
+      for (let i = -r; i <= r; i++) {
+        const v = Math.exp(-(i * i) / (2 * sigma * sigma));
+        k.push(v);
+        sum += v;
+      }
+
+      return { k: k.map(v => v / sum), r };
+    }
+
+    function convolveSeparable(grid, nx, ny, sigma) {
+      if (sigma <= 0) return grid;
+
+      const { k, r } = gaussianKernel1D(sigma);
+
+      // Horizontal
+      const tmp = new Float32Array(nx * ny);
+
+      for (let y = 0; y < ny; y++) {
+        for (let x = 0; x < nx; x++) {
+          let acc = 0;
+          for (let i = -r; i <= r; i++) {
+            const xx = Math.min(nx - 1, Math.max(0, x + i));
+            acc += grid[y * nx + xx] * k[i + r];
+          }
+          tmp[y * nx + x] = acc;
+        }
+      }
+
+      // Vertical
+      const out = new Float32Array(nx * ny);
+
+      for (let y = 0; y < ny; y++) {
+        for (let x = 0; x < nx; x++) {
+          let acc = 0;
+          for (let i = -r; i <= r; i++) {
+            const yy = Math.min(ny - 1, Math.max(0, y + i));
+            acc += tmp[yy * nx + x] * k[i + r];
+          }
+          out[y * nx + x] = acc;
+        }
+      }
+
+      return out;
+    }
+
+    function buildDensityGrid(points, cellKm) {
+      const lats = points.map(p => p.lat);
+      const lons = points.map(p => p.lon);
+
+      const minLat = Math.min(...lats);
+      const maxLat = Math.max(...lats);
+      const minLon = Math.min(...lons);
+      const maxLon = Math.max(...lons);
+      const midLat = (minLat + maxLat) / 2;
+
+      const dLat = kmToDegLat(cellKm);
+      const dLon = kmToDegLon(cellKm, midLat);
+
+      // Padding 1 cellule
+      const minLatP = minLat - dLat;
+      const maxLatP = maxLat + dLat;
+      const minLonP = minLon - dLon;
+      const maxLonP = maxLon + dLon;
+
+      const nx = Math.max(40, Math.min(900, Math.ceil((maxLonP - minLonP) / dLon)));
+      const ny = Math.max(40, Math.min(700, Math.ceil((maxLatP - minLatP) / dLat)));
+
+      const grid = new Float32Array(nx * ny);
+
+      for (const p of points) {
+        const x = Math.floor((p.lon - minLonP) / dLon);
+        const y = Math.floor((p.lat - minLatP) / dLat);
+        if (x >= 0 && x < nx && y >= 0 && y < ny) {
+          grid[y * nx + x] += 1;
+        }
+      }
+
+      return { grid, nx, ny, minLatP, minLonP, dLat, dLon };
+    }
+
+    function contoursToGeoJSON(contours, meta) {
+      const { minLatP, minLonP, dLat, dLon } = meta;
+
+      const features = contours.map(c => {
+        const multipolys = c.coordinates.map(poly =>
+          poly.map(ring =>
+            ring.map(([x, y]) => {
+              const lon = minLonP + x * dLon;
+              const lat = minLatP + y * dLat;
+              return [lon, lat];
+            })
+          )
+        );
+
+        return {
+          type: "Feature",
+          properties: { value: c.value },
+          geometry: { type: "MultiPolygon", coordinates: multipolys }
+        };
+      });
+
+      return { type: "FeatureCollection", features };
+    }
+
+    function rebuildIsodensity(points) {
+      if (!points || points.length < 50) return;
+
+      if (isoLayer) map.removeLayer(isoLayer);
+
+      const cellKm = Number(document.getElementById("cellKm").value);
+      const sigma = Number(document.getElementById("sigma").value);
+
+      statEl.textContent = `Iso-densité : grille ${cellKm} km, sigma ${sigma}…`;
+
+      const meta = buildDensityGrid(points, cellKm);
+      let grid = meta.grid;
+
+      grid = convolveSeparable(grid, meta.nx, meta.ny, sigma);
+
+      const maxV = grid.reduce((m, v) => Math.max(m, v), 0);
+
+      // Seuils auto (progression simple)
+      const base = Math.max(1, maxV / 10);
+      const thresholds = [];
+      for (let i = 1; i <= 7; i++) thresholds.push(base * i);
+
+      const contourGen = d3.contours()
+        .size([meta.nx, meta.ny])
+        .thresholds(thresholds);
+
+      const contours = contourGen(grid);
+      const fc = contoursToGeoJSON(contours, meta);
+
+      isoLayer = L.geoJSON(fc, {
+        style: () => ({
+          color: ISO_COLOR,
+          weight: ISO_WEIGHT,
+          opacity: ISO_OPACITY,
+          fillOpacity: 0
+        })
+      }).addTo(map);
+
+      statEl.textContent =
+        `OK : ${points.length.toLocaleString()} points | grille ${meta.nx}×${meta.ny} | max densité ~ ${maxV.toFixed(1)}`;
+    }
+
+    // -------------------------------------------------------------------------
+    // Export PNG (via plugin)
+    // -------------------------------------------------------------------------
+    async function exportMapPNG() {
+      statEl.textContent = "Export PNG HD…";
+
+      const mapDiv = document.getElementById("map");
+      const oldW = mapDiv.style.width;
+      const oldH = mapDiv.style.height;
+
+      // A4 paysage ~ 3508×2480 à 300 dpi → on prend un peu au-dessus
+      mapDiv.style.width = "3600px";
+      mapDiv.style.height = "2400px";
+      map.invalidateSize(true);
+
+      setTimeout(async () => {
+        try {
+          const blob = await screenshoter.takeScreen("blob", { format: "png", quality: 1 });
+
+          // restore
+          mapDiv.style.width = oldW;
+          mapDiv.style.height = oldH;
+          map.invalidateSize(true);
+
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = "cmra_carte_hd.png";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+
+          statEl.textContent = "PNG téléchargé (cmra_carte_hd.png).";
+        } catch (e) {
+          // restore
+          mapDiv.style.width = oldW;
+          mapDiv.style.height = oldH;
+          map.invalidateSize(true);
+
+          console.error(e);
+          statEl.textContent = "Export échoué (voir console).";
+        }
+      }, 900);
+    }
+
+    // -------------------------------------------------------------------------
+    // Main
+    // -------------------------------------------------------------------------
+    async function main() {
+      const res = await fetch("./points.csv");
+      if (!res.ok) throw new Error("Impossible de charger points.csv");
+
+      const text = await res.text();
+      const points = parseCSV(text);
+      cachedPoints = points;
+
+      if (points.length) {
+        const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
+        map.fitBounds(bounds.pad(0.15));
+      }
+
+      drawHeat(points);
+      rebuildIsodensity(points);
+    }
+
+    main().catch(err => {
+      console.error(err);
+      statEl.textContent = "Erreur : " + (err?.message ?? err);
+    });
+  </script>
+</body>
+</html>
