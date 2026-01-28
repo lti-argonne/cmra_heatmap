@@ -9,10 +9,20 @@
 
   <style>
     html, body { height: 100%; margin: 0; }
-    #map { height: 100%; width: 100%; }
+
+    /* IMPORTANT : position:relative pour que les cartouches soient DANS la carte */
+    #map {
+      height: 100%;
+      width: 100%;
+      position: relative;
+      overflow: hidden; 
+    }
 
     .toolbar {
-      position: absolute; top: 10px; left: 10px; z-index: 9999;
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      z-index: 9999;
       background: rgba(255, 255, 255, 0.92);
       padding: 10px 12px;
       border-radius: 10px;
@@ -49,6 +59,73 @@
     }
 
     .stat { margin-top: 6px; color: #333; }
+
+    /* ------------------------------------------------------------------ */
+    /* Cartouches d’impression (doivent être INSIDE #map pour l’export PNG) */
+    /* ------------------------------------------------------------------ */
+    .print-title {
+  position: absolute;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-transform: uppercase;
+  z-index: 99999;
+
+  background: rgba(255,255,255,0.85);
+  padding: 6px 14px;
+  border-radius: 12px;
+
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+
+  pointer-events: none; /* ne bloque pas la carte */
+  white-space: nowrap;
+}
+
+    .print-credit {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      z-index: 99999;
+      background: rgba(255,255,255,0.85);
+      padding: 6px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.25;
+      max-width: 68%;
+      pointer-events: none;
+    }
+
+    .print-scale {
+      position: absolute;
+      right: 12px;
+      bottom: 12px;
+      z-index: 99999;
+      background: rgba(255,255,255,0.85);
+      padding: 6px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      line-height: 1.1;
+      min-width: 160px;
+      pointer-events: none;
+    }
+
+    .print-scale .bar {
+      height: 6px;
+      width: 140px; /* ajusté dynamiquement */
+      background: #111;
+      border-radius: 2px;
+      margin-bottom: 4px;
+      opacity: 0.85;
+    }
+
+    .print-scale .txt {
+      text-align: center;
+      white-space: nowrap;
+    }
+
+    .print-title, .print-credit, .print-scale { backdrop-filter: blur(2px); }
   </style>
 </head>
 
@@ -71,6 +148,16 @@
     <label for="isoColor">Couleur isolignes</label>
     <input id="isoColor" type="color" value="#6fe7ff" />
 
+    <hr />
+
+    <label><input id="toggleIso" type="checkbox" checked /> Isolignes</label>
+    <label><input id="toggleCredit" type="checkbox" checked /> Cartouche crédits</label>
+    <label><input id="toggleRivers" type="checkbox" checked /> Rivières</label>
+    <label><input id="toggleRiversOut" type="checkbox" checked/> Rivières (hors Imperium)</label>
+    <label><input id="toggleRoutes" type="checkbox" checked /> Routes</label>
+    <label><input id="toggleLakes" type="checkbox" checked/> Lacs</label>
+    <label><input id="togglePlaces" type="checkbox" checked/> Villes (points)</label>
+
     <div class="row">
       <button id="rebuild" type="button">Recalculer iso-densité</button>
       <button id="exportPng" type="button">Exporter PNG (HD)</button>
@@ -84,16 +171,37 @@
     </small>
   </div>
 
-  <div id="map"></div>
+  <!-- IMPORTANT : cartouches INSIDE la map -->
+  <div id="map">
+    <div id="printTitle" class="print-title">projet-cmra — 2026 – P. Ciezar</div>
+
+    <div id="printCredit" class="print-credit">
+      Fond : Digital Atlas of the Roman Empire (DARE) — © Johan Ahlfeldt (miroir).<br>
+      Données : CMRA — © P. Van Ossel, L. Bakker, P. Ciezar (coll.).<br>
+      Carte : heatmap + iso-densité.
+    </div>
+
+    <div id="printScale" class="print-scale">
+      <div class="bar"></div>
+      <div class="txt" id="printScaleTxt">Échelle</div>
+    </div>
+  </div>
 
   <!-- Libs -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
   <script src="https://unpkg.com/d3-contour@4"></script>
 
-  <!-- Export (screenshoter + dom-to-image-more) -->
+  <!-- Export -->
   <script src="https://unpkg.com/dom-to-image-more@2.16.0/dist/dom-to-image-more.min.js"></script>
   <script src="https://unpkg.com/leaflet-simple-map-screenshoter@0.5.0/dist/leaflet-simple-map-screenshoter.js"></script>
+
+  <!-- Données externes (scripts JS qui définissent des variables globales) -->
+  <script src="https://czr-pablo.github.io/rivers.geojson"></script>
+  <script src="https://czr-pablo.github.io/rivershorsImperium.geojson"></script>
+  <script src="https://czr-pablo.github.io/routes.geojson"></script>
+  <script src="https://czr-pablo.github.io/lakes.geojson"></script>
+  <script src="https://czr-pablo.github.io/places.geojson"></script>
 
   <script>
     // -------------------------------------------------------------------------
@@ -107,12 +215,12 @@
     const mapMinZoom = 1;
     const mapMaxZoom = 14;
 
-    // Styles iso (scope global !)
+    // Styles iso (scope global)
     let ISO_COLOR = "#6fe7ff";
     let ISO_OPACITY = 0.9;
     let ISO_WEIGHT = 1.1;
 
-    // Layers
+    // Layers dynamiques
     let heatLayer = null;
     let isoLayer = null;
     let cachedPoints = [];
@@ -131,8 +239,7 @@
         minZoom: mapMinZoom,
         maxZoom: mapMaxZoom,
         bounds: mapBounds,
-        attribution: "Tiles: DARE (Ahlfeldt) — miroir Netlify",
-        // crossOrigin: true, // utile parfois pour export, mais dépend aussi du serveur
+        attribution: "Tiles: DARE (Ahlfeldt) — miroir Netlify"
       }
     ).addTo(map);
 
@@ -142,19 +249,121 @@
         minZoom: mapMinZoom,
         maxZoom: mapMaxZoom,
         bounds: mapBounds,
-        opacity: 0.65,
-        // crossOrigin: true,
+        opacity: 0.65
       }
     ).addTo(map);
 
+    // Zoom UI (outils + / -)
+    L.control.zoom({ position: "topright" }).addTo(map);
+
+    // Échelle Leaflet (celle-ci est interactive, mais elle n’est pas capturée par notre cartouche custom)
     L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
 
-    // Screenshoter (ATTENTION: constructeur = L.simpleMapScreenshoter)
+    // Screenshoter
     const screenshoter = new L.simpleMapScreenshoter({
       hidden: true,
       preventDownload: true
-      // domtoimage: domtoimage // optionnel, plugin détecte souvent tout seul
     }).addTo(map);
+
+    // -------------------------------------------------------------------------
+    // Cartouche échelle (capture PNG)
+    // -------------------------------------------------------------------------
+    function roundNiceMeters(m) {
+      const steps = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000];
+      let best = steps[0];
+      for (const s of steps) if (s <= m) best = s;
+      return best;
+    }
+
+    function updatePrintScale() {
+      const px = 140;
+      const p1 = map.containerPointToLatLng([20, 20]);
+      const p2 = map.containerPointToLatLng([20 + px, 20]);
+
+      const meters = map.distance(p1, p2);
+      const nice = roundNiceMeters(meters);
+
+      const ratio = nice / meters;
+      const newPx = Math.max(60, Math.min(260, Math.round(px * ratio)));
+
+      const bar = document.querySelector("#printScale .bar");
+      bar.style.width = `${newPx}px`;
+
+      const txt = document.getElementById("printScaleTxt");
+      txt.textContent = (nice >= 1000)
+        ? `${(nice / 1000).toLocaleString("fr-FR")} km`
+        : `${nice.toLocaleString("fr-FR")} m`;
+    }
+
+    map.on("zoomend moveend", updatePrintScale);
+    updatePrintScale();
+
+    // -------------------------------------------------------------------------
+    // Couches externes (variables globales)
+    // -------------------------------------------------------------------------
+    let layerRivers = null;
+    let layerRiversOut = null;
+    let layerRoutes = null;
+    let layerLakes = null;
+    let layerPlaces = null;
+
+    function initExternalLayersFromGlobals() {
+      if (typeof rivieres !== "undefined") {
+        layerRivers = L.geoJSON(rivieres, {
+          style: { color: "#2764bf", opacity: 0.45, weight: 1.5 }
+        });
+      }
+
+      if (typeof autresfleuves !== "undefined") {
+        layerRiversOut = L.geoJSON(autresfleuves, {
+          style: { color: "#2764bf", opacity: 0.45, weight: 1.5 }
+        });
+      }
+
+      if (typeof route !== "undefined") {
+        layerRoutes = L.geoJSON(route, {
+          style: { color: "#771b1b", opacity: 0.45, weight: 1 }
+        });
+      }
+
+      if (typeof lakes !== "undefined") {
+        layerLakes = L.geoJSON(lakes, {
+          style: {
+            fillColor: "#2764bf",
+            color: "#000",
+            weight: 0.5,
+            opacity: 0,
+            fillOpacity: 0.5
+          }
+        });
+      }
+
+      if (typeof places !== "undefined") {
+        layerPlaces = L.geoJSON(places, {
+          onEachFeature: (feature, layer) => {
+            if (feature.properties?.modern) {
+              layer.bindPopup(`${feature.properties.modern} / ${feature.properties.latin ?? ""}`);
+            }
+          },
+          pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+            radius: 3,             // taille du point
+            fillColor: "#c2bcbc", // couleur de remplissage
+            color: "#000",
+            weight: 0.7,
+            opacity: 0.6,
+            fillOpacity: 1
+          })
+        });
+      }
+    }
+
+    function setLayerVisible(layer, on) {
+      if (!layer) return;
+      if (on) layer.addTo(map);
+      else map.removeLayer(layer);
+    }
+
+    initExternalLayersFromGlobals();
 
     // -------------------------------------------------------------------------
     // UI bindings
@@ -180,6 +389,43 @@
       exportMapPNG();
     });
 
+    document.getElementById("toggleRivers").addEventListener("change", (e) => {
+      setLayerVisible(layerRivers, e.target.checked);
+    });
+
+    document.getElementById("toggleRiversOut").addEventListener("change", (e) => {
+      setLayerVisible(layerRiversOut, e.target.checked);
+    });
+
+    document.getElementById("toggleRoutes").addEventListener("change", (e) => {
+      setLayerVisible(layerRoutes, e.target.checked);
+    });
+
+    document.getElementById("toggleLakes").addEventListener("change", (e) => {
+      setLayerVisible(layerLakes, e.target.checked);
+    });
+
+    document.getElementById("togglePlaces").addEventListener("change", (e) => {
+      setLayerVisible(layerPlaces, e.target.checked);
+    });
+
+    document.getElementById("toggleIso").addEventListener("change", (e) => {
+      const on = e.target.checked;
+      if (!isoLayer) return;
+      setLayerVisible(isoLayer, on);
+    });
+
+    document.getElementById("toggleCredit").addEventListener("change", (e) => {
+      document.getElementById("printCredit").style.display = e.target.checked ? "block" : "none";
+    });
+
+    // Appliquer état initial des cases
+    setLayerVisible(layerRivers, document.getElementById("toggleRivers").checked);
+    setLayerVisible(layerRiversOut, document.getElementById("toggleRiversOut").checked);
+    setLayerVisible(layerRoutes, document.getElementById("toggleRoutes").checked);
+    setLayerVisible(layerLakes, document.getElementById("toggleLakes").checked);
+    setLayerVisible(layerPlaces, document.getElementById("togglePlaces").checked);
+
     // -------------------------------------------------------------------------
     // CSV parsing
     // -------------------------------------------------------------------------
@@ -197,8 +443,6 @@
       if (lines.length < 2) return [];
 
       const header = lines[0].split(",").map(s => s.trim().toLowerCase());
-
-      // Tolérant: lat/lon OU LAT/LON
       const latIdx = header.indexOf("lat");
       const lonIdx = header.indexOf("lon");
 
@@ -207,14 +451,12 @@
       }
 
       const out = [];
-
       for (let i = 1; i < lines.length; i++) {
         const parts = lines[i].split(",").map(s => s.trim());
         const lat = Number(parts[latIdx]);
         const lon = Number(parts[lonIdx]);
         if (isValidLatLng(lat, lon)) out.push({ lat, lon });
       }
-
       return out;
     }
 
@@ -227,7 +469,7 @@
       if (heatLayer) map.removeLayer(heatLayer);
 
       const radius = Number(document.getElementById("heatRadius").value);
-      const heatData = points.map(p => [p.lat, p.lon, 1]); // poids=1
+      const heatData = points.map(p => [p.lat, p.lon, 1]);
 
       heatLayer = L.heatLayer(heatData, {
         radius,
@@ -263,9 +505,7 @@
 
       const { k, r } = gaussianKernel1D(sigma);
 
-      // Horizontal
       const tmp = new Float32Array(nx * ny);
-
       for (let y = 0; y < ny; y++) {
         for (let x = 0; x < nx; x++) {
           let acc = 0;
@@ -277,9 +517,7 @@
         }
       }
 
-      // Vertical
       const out = new Float32Array(nx * ny);
-
       for (let y = 0; y < ny; y++) {
         for (let x = 0; x < nx; x++) {
           let acc = 0;
@@ -290,7 +528,6 @@
           out[y * nx + x] = acc;
         }
       }
-
       return out;
     }
 
@@ -307,7 +544,6 @@
       const dLat = kmToDegLat(cellKm);
       const dLon = kmToDegLon(cellKm, midLat);
 
-      // Padding 1 cellule
       const minLatP = minLat - dLat;
       const maxLatP = maxLat + dLat;
       const minLonP = minLon - dLon;
@@ -321,9 +557,7 @@
       for (const p of points) {
         const x = Math.floor((p.lon - minLonP) / dLon);
         const y = Math.floor((p.lat - minLatP) / dLat);
-        if (x >= 0 && x < nx && y >= 0 && y < ny) {
-          grid[y * nx + x] += 1;
-        }
+        if (x >= 0 && x < nx && y >= 0 && y < ny) grid[y * nx + x] += 1;
       }
 
       return { grid, nx, ny, minLatP, minLonP, dLat, dLon };
@@ -369,9 +603,8 @@
       grid = convolveSeparable(grid, meta.nx, meta.ny, sigma);
 
       const maxV = grid.reduce((m, v) => Math.max(m, v), 0);
-
-      // Seuils auto (progression simple)
       const base = Math.max(1, maxV / 10);
+
       const thresholds = [];
       for (let i = 1; i <= 7; i++) thresholds.push(base * i);
 
@@ -405,16 +638,17 @@
       const oldW = mapDiv.style.width;
       const oldH = mapDiv.style.height;
 
-      // A4 paysage ~ 3508×2480 à 300 dpi → on prend un peu au-dessus
       mapDiv.style.width = "3600px";
       mapDiv.style.height = "2400px";
-      map.invalidateSize(true);
+      map.invalidateSize(true)
+       updatePrintScale();                 // recalc l’échelle pour la nouvelle taille
+        await new Promise(r => requestAnimationFrame(r));
+        await new Promise(r => requestAnimationFrame(r)); // 2 frames = plus stable;
 
       setTimeout(async () => {
         try {
           const blob = await screenshoter.takeScreen("blob", { format: "png", quality: 1 });
 
-          // restore
           mapDiv.style.width = oldW;
           mapDiv.style.height = oldH;
           map.invalidateSize(true);
@@ -430,7 +664,6 @@
 
           statEl.textContent = "PNG téléchargé (cmra_carte_hd.png).";
         } catch (e) {
-          // restore
           mapDiv.style.width = oldW;
           mapDiv.style.height = oldH;
           map.invalidateSize(true);
@@ -452,10 +685,12 @@
       const points = parseCSV(text);
       cachedPoints = points;
 
-      if (points.length) {
-        const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
-        map.fitBounds(bounds.pad(0.15));
-      }
+      const AUTO_FIT = false;
+
+if (AUTO_FIT && points.length) {
+  const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
+  map.fitBounds(bounds.pad(0.15));
+}
 
       drawHeat(points);
       rebuildIsodensity(points);
