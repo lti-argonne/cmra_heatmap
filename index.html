@@ -252,6 +252,7 @@ map.getPane("panePlaces").style.zIndex = 650;
 
 map.createPane("paneFinds");    // points bruts (découvertes)
 map.getPane("paneFinds").style.zIndex = 660; // AU-DESSUS des villes
+map.getPane("paneFinds").style.pointerEvents = "none"; // <-- clé
 
     const hillshade = L.tileLayer(
       "https://corpus-argonne-fond.netlify.app/hillshade/{z}/{x}/{y}.png",
@@ -373,7 +374,8 @@ map.getPane("paneFinds").style.zIndex = 660; // AU-DESSUS des villes
             color: "#000",
             weight: 0.7,
             opacity: 0.6,
-            fillOpacity: 1
+            fillOpacity: 1,
+            
           })
         });
       }
@@ -642,7 +644,9 @@ document.getElementById("findOpacity").addEventListener("input", () => {
         opacity: Math.min(1, op + 0.15),
         fill: true,
         fillColor: "#111",
-        fillOpacity: op
+        fillOpacity: op,
+        interactive: false,
+        bubblingMouseEvents: false,  // Leaflet (évite propagation bizarre)
       })
     )
   );
