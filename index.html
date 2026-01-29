@@ -246,11 +246,14 @@
     // -------------------------------------------------------------------------
     // Panes Leaflet (ordre des calques)
     // -------------------------------------------------------------------------
-    map.createPane("panePlaces");
-    map.getPane("panePlaces").style.zIndex = 650;
+    map.createPane("paneIso");      // isolignes (courbes de niveau)
+    map.getPane("paneIso").style.zIndex = 650;
 
-    map.createPane("paneFinds");
-    map.getPane("paneFinds").style.zIndex = 660;
+    map.createPane("panePlaces");   // villes
+    map.getPane("panePlaces").style.zIndex = 660;
+
+    map.createPane("paneFinds");    // points bruts (découvertes)
+    map.getPane("paneFinds").style.zIndex = 670;
 
     const hillshade = L.tileLayer(
       "https://corpus-argonne-fond.netlify.app/hillshade/{z}/{x}/{y}.png",
@@ -684,6 +687,7 @@
       const fc = contoursToGeoJSON(contours, meta);
 
       isoLayer = L.geoJSON(fc, {
+        pane: "paneIso",  // Utiliser le pane dédié aux isolignes
         style: () => ({
           color: ISO_COLOR,
           weight: ISO_WEIGHT,
