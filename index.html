@@ -157,19 +157,27 @@
     <label><input id="toggleRoutes" type="checkbox" checked /> Routes</label>
     <label><input id="toggleLakes" type="checkbox" checked/> Lacs</label>
     <label><input id="togglePlaces" type="checkbox" checked/> Villes (points)</label>
+<label><input id="toggleFinds" type="checkbox" /> Points de découverte (bruts)</label>
 
+<label for="findRadius">Taille points découverte</label>
+<input id="findRadius" type="range" min="1" max="6" step="1" value="2" />
+
+<label for="findOpacity">Opacité points découverte</label>
+<input id="findOpacity" type="range" min="0.05" max="1" step="0.05" value="0.65" />
+
+<hr />
+<label><input id="toggleLog" type="checkbox" /> Densité en échelle logarithmique (iso)</label>
     <div class="row">
       <button id="rebuild" type="button">Recalculer iso-densité</button>
       <button id="exportPng" type="button">Exporter PNG (HD)</button>
     </div>
 
     <div class="stat" id="stat">Chargement…</div>
-<!--
-    <small>
+
+    <!-- <small>
       Ouvre via un serveur local (sinon le fetch du CSV est bloqué).<br/>
       Exemple : <code>python3 -m http.server 8001</code> puis http://localhost:8001
-    </small>
-  -->
+    </small> -->
   </div>
 
   <!-- IMPORTANT : cartouches INSIDE la map -->
@@ -225,6 +233,9 @@
     let heatLayer = null;
     let isoLayer = null;
     let cachedPoints = [];
+    let layerFinds = null;
+
+    const findsRenderer = L.canvas({ padding: 0.5 });
 
     const statEl = document.getElementById("stat");
 
@@ -419,6 +430,20 @@
     document.getElementById("toggleCredit").addEventListener("change", (e) => {
       document.getElementById("printCredit").style.display = e.target.checked ? "block" : "none";
     });
+    document.getElementById("toggleFinds").addEventListener("change", (e) => {
+  if (!layerFinds) return;
+  setLayerVisible(layerFinds, e.target.checked);
+});
+
+document.getElementById("findRadius").addEventListener("input", () => {
+  if (!cachedPoints.length) return;
+  buildFindsLayer(cachedPoints);
+});
+
+document.getElementById("findOpacity").addEventListener("input", () => {
+  if (!cachedPoints.length) return;
+  buildFindsLayer(cachedPoints);
+});
 
     // Appliquer état initial des cases
     setLayerVisible(layerRivers, document.getElementById("toggleRivers").checked);
@@ -587,6 +612,33 @@
 
       return { type: "FeatureCollection", features };
     }
+    function buildFindsLayer(points) {
+  if (layerFinds) map.removeLayer(layerFinds);
+
+  const r = Number(document.getElementById("findRadius").value);
+  const op = Number(document.getElementById("findOpacity").value);
+
+  // LayerGroup de circleMarker rendus en Canvas (rapide)
+  layerFinds = L.layerGroup(
+    points.map(p =>
+      L.circleMarker([p.lat, p.lon], {
+        renderer: findsRenderer,
+        radius: r,
+        stroke: true,
+        color: "#111",
+        weight: 0.3,
+        opacity: Math.min(1, op + 0.15),
+        fill: true,
+        fillColor: "#111",
+        fillOpacity: op
+      })
+    )
+  );
+
+  // visible ou non selon checkbox
+  const on = document.getElementById("toggleFinds").checked;
+  if (on) layerFinds.addTo(map);
+}
 
     function rebuildIsodensity(points) {
       if (!points || points.length < 50) return;
@@ -602,6 +654,15 @@
       let grid = meta.grid;
 
       grid = convolveSeparable(grid, meta.nx, meta.ny, sigma);
+
+      const useLog = document.getElementById("toggleLog")?.checked;
+
+if (useLog) {
+  // log1p = log(1+v) : garde 0→0 et compresse les fortes densités
+  for (let i = 0; i < grid.length; i++) {
+    grid[i] = Math.log1p(grid[i]);
+  }
+}
 
       const maxV = grid.reduce((m, v) => Math.max(m, v), 0);
       const base = Math.max(1, maxV / 10);
@@ -685,6 +746,8 @@
       const text = await res.text();
       const points = parseCSV(text);
       cachedPoints = points;
+
+      buildFindsLayer(points);
 
       const AUTO_FIT = false;
 
