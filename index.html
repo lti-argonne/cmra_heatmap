@@ -61,27 +61,27 @@
     .stat { margin-top: 6px; color: #333; }
 
     /* ------------------------------------------------------------------ */
-    /* Cartouches d’impression (doivent être INSIDE #map pour l’export PNG) */
+    /* Cartouches d'impression (doivent être INSIDE #map pour l'export PNG) */
     /* ------------------------------------------------------------------ */
     .print-title {
-  position: absolute;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  text-transform: uppercase;
-  z-index: 99999;
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-transform: uppercase;
+      z-index: 99999;
 
-  background: rgba(255,255,255,0.85);
-  padding: 6px 14px;
-  border-radius: 12px;
+      background: rgba(255,255,255,0.85);
+      padding: 6px 14px;
+      border-radius: 12px;
 
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.04em;
 
-  pointer-events: none; /* ne bloque pas la carte */
-  white-space: nowrap;
-}
+      pointer-events: none;
+      white-space: nowrap;
+    }
 
     .print-credit {
       position: absolute;
@@ -113,7 +113,7 @@
 
     .print-scale .bar {
       height: 6px;
-      width: 140px; /* ajusté dynamiquement */
+      width: 140px;
       background: #111;
       border-radius: 2px;
       margin-bottom: 4px;
@@ -126,10 +126,6 @@
     }
 
     .print-title, .print-credit, .print-scale { backdrop-filter: blur(2px); }
-
-    #map .leaflet-paneFinds-pane {
-    pointer-events: none !important;
-}
   </style>
 </head>
 
@@ -161,27 +157,23 @@
     <label><input id="toggleRoutes" type="checkbox" checked /> Routes</label>
     <label><input id="toggleLakes" type="checkbox" checked/> Lacs</label>
     <label><input id="togglePlaces" type="checkbox" checked/> Villes (points)</label>
-<label><input id="toggleFinds" type="checkbox" /> Points de découverte (bruts)</label>
+    <label><input id="toggleFinds" type="checkbox" /> Points de découverte (bruts)</label>
 
-<label for="findRadius">Taille points découverte</label>
-<input id="findRadius" type="range" min="1" max="6" step="1" value="2" />
+    <label for="findRadius">Taille points découverte</label>
+    <input id="findRadius" type="range" min="1" max="6" step="1" value="2" />
 
-<label for="findOpacity">Opacité points découverte</label>
-<input id="findOpacity" type="range" min="0.05" max="1" step="0.05" value="0.65" />
+    <label for="findOpacity">Opacité points découverte</label>
+    <input id="findOpacity" type="range" min="0.05" max="1" step="0.05" value="0.65" />
 
-<hr />
-<label><input id="toggleLog" type="checkbox" /> Densité en échelle logarithmique (iso)</label>
+    <hr />
+    <label><input id="toggleLog" type="checkbox" /> Densité en échelle logarithmique (iso)</label>
+    
     <div class="row">
       <button id="rebuild" type="button">Recalculer iso-densité</button>
       <button id="exportPng" type="button">Exporter PNG (HD)</button>
     </div>
 
     <div class="stat" id="stat">Chargement…</div>
-
-    <!-- <small>
-      Ouvre via un serveur local (sinon le fetch du CSV est bloqué).<br/>
-      Exemple : <code>python3 -m http.server 8001</code> puis http://localhost:8001
-    </small> -->
   </div>
 
   <!-- IMPORTANT : cartouches INSIDE la map -->
@@ -206,8 +198,7 @@
   <script src="https://unpkg.com/d3-contour@4"></script>
 
   <!-- Export -->
-  <script src="https://unpkg.com/dom-to-image-more@2.16.0/dist/dom-to-image-more.min.js"></script>
-  <script src="https://unpkg.com/leaflet-simple-map-screenshoter@0.5.0/dist/leaflet-simple-map-screenshoter.js"></script>
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
   <!-- Données externes (scripts JS qui définissent des variables globales) -->
   <script src="https://czr-pablo.github.io/rivers.geojson"></script>
@@ -246,17 +237,20 @@
     // -------------------------------------------------------------------------
     // Map init
     // -------------------------------------------------------------------------
-    const map = L.map("map", { zoomDelta: 0.5, zoomSnap: 0 })
-      .setView([48.84664, 2.36481], 5.75);
-      // -------------------------------------------------------------------------
-// Panes Leaflet (ordre des calques)
-// -------------------------------------------------------------------------
-map.createPane("panePlaces");   // villes
-map.getPane("panePlaces").style.zIndex = 650;
+    const map = L.map("map", { 
+      zoomDelta: 0.5, 
+      zoomSnap: 0,
+      preferCanvas: true  // IMPORTANT pour export
+    }).setView([48.84664, 2.36481], 5.75);
 
-map.createPane("paneFinds");    // points bruts (découvertes)
-map.getPane("paneFinds").style.zIndex = 660; // AU-DESSUS des villes
-map.getPane("paneFinds").style.pointerEvents = "none"; // <-- clé
+    // -------------------------------------------------------------------------
+    // Panes Leaflet (ordre des calques)
+    // -------------------------------------------------------------------------
+    map.createPane("panePlaces");
+    map.getPane("panePlaces").style.zIndex = 650;
+
+    map.createPane("paneFinds");
+    map.getPane("paneFinds").style.zIndex = 660;
 
     const hillshade = L.tileLayer(
       "https://corpus-argonne-fond.netlify.app/hillshade/{z}/{x}/{y}.png",
@@ -281,14 +275,8 @@ map.getPane("paneFinds").style.pointerEvents = "none"; // <-- clé
     // Zoom UI (outils + / -)
     L.control.zoom({ position: "topright" }).addTo(map);
 
-    // Échelle Leaflet (celle-ci est interactive, mais elle n’est pas capturée par notre cartouche custom)
+    // Échelle Leaflet
     L.control.scale({ imperial: false, position: "bottomright" }).addTo(map);
-
-    // Screenshoter
-    const screenshoter = new L.simpleMapScreenshoter({
-      hidden: true,
-      preventDownload: true
-    }).addTo(map);
 
     // -------------------------------------------------------------------------
     // Cartouche échelle (capture PNG)
@@ -365,7 +353,7 @@ map.getPane("paneFinds").style.pointerEvents = "none"; // <-- clé
 
       if (typeof places !== "undefined") {
         layerPlaces = L.geoJSON(places, {
-           pane: "panePlaces",
+          pane: "panePlaces",
           onEachFeature: (feature, layer) => {
             if (feature.properties?.modern) {
               layer.bindPopup(`${feature.properties.modern} / ${feature.properties.latin ?? ""}`);
@@ -373,13 +361,12 @@ map.getPane("paneFinds").style.pointerEvents = "none"; // <-- clé
           },
           pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
             pane: "panePlaces",
-            radius: 3,             // taille du point
-            fillColor: "#c2bcbc", // couleur de remplissage
+            radius: 3,
+            fillColor: "#c2bcbc",
             color: "#000",
             weight: 0.7,
             opacity: 0.6,
             fillOpacity: 1,
-            
           })
         });
       }
@@ -446,20 +433,21 @@ map.getPane("paneFinds").style.pointerEvents = "none"; // <-- clé
     document.getElementById("toggleCredit").addEventListener("change", (e) => {
       document.getElementById("printCredit").style.display = e.target.checked ? "block" : "none";
     });
+
     document.getElementById("toggleFinds").addEventListener("change", (e) => {
-  if (!layerFinds) return;
-  setLayerVisible(layerFinds, e.target.checked);
-});
+      if (!layerFinds) return;
+      setLayerVisible(layerFinds, e.target.checked);
+    });
 
-document.getElementById("findRadius").addEventListener("input", () => {
-  if (!cachedPoints.length) return;
-  buildFindsLayer(cachedPoints);
-});
+    document.getElementById("findRadius").addEventListener("input", () => {
+      if (!cachedPoints.length) return;
+      buildFindsLayer(cachedPoints);
+    });
 
-document.getElementById("findOpacity").addEventListener("input", () => {
-  if (!cachedPoints.length) return;
-  buildFindsLayer(cachedPoints);
-});
+    document.getElementById("findOpacity").addEventListener("input", () => {
+      if (!cachedPoints.length) return;
+      buildFindsLayer(cachedPoints);
+    });
 
     // Appliquer état initial des cases
     setLayerVisible(layerRivers, document.getElementById("toggleRivers").checked);
@@ -516,10 +504,10 @@ document.getElementById("findOpacity").addEventListener("input", () => {
       heatLayer = L.heatLayer(heatData, {
         radius,
         blur: 22,
-        maxZoom: 10
+        maxZoom: 10,
+        minOpacity: 0.05
       }).addTo(map);
     }
-   
 
     // -------------------------------------------------------------------------
     // Iso-densité (grille + lissage + d3-contour)
@@ -629,36 +617,35 @@ document.getElementById("findOpacity").addEventListener("input", () => {
 
       return { type: "FeatureCollection", features };
     }
+
     function buildFindsLayer(points) {
-  if (layerFinds) map.removeLayer(layerFinds);
+      if (layerFinds) map.removeLayer(layerFinds);
 
-  const r = Number(document.getElementById("findRadius").value);
-  const op = Number(document.getElementById("findOpacity").value);
+      const r = Number(document.getElementById("findRadius").value);
+      const op = Number(document.getElementById("findOpacity").value);
 
-  // LayerGroup de circleMarker rendus en Canvas (rapide)
-  layerFinds = L.layerGroup(
-    points.map(p =>
-      L.circleMarker([p.lat, p.lon], {
-         pane: "paneFinds",
-        renderer: findsRenderer,
-        radius: r,
-        stroke: true,
-        color: "#111",
-        weight: 0.3,
-        opacity: Math.min(1, op + 0.15),
-        fill: true,
-        fillColor: "#111",
-        fillOpacity: op,
-        interactive: false,
-        bubblingMouseEvents: false,  // Leaflet (évite propagation bizarre)
-      })
-    )
-  );
+      layerFinds = L.layerGroup(
+        points.map(p =>
+          L.circleMarker([p.lat, p.lon], {
+            pane: "paneFinds",
+            renderer: findsRenderer,
+            radius: r,
+            stroke: true,
+            color: "#111",
+            weight: 0.3,
+            opacity: Math.min(1, op + 0.15),
+            fill: true,
+            fillColor: "#111",
+            fillOpacity: op,
+            interactive: false,
+            bubblingMouseEvents: false,
+          })
+        )
+      );
 
-  // visible ou non selon checkbox
-  const on = document.getElementById("toggleFinds").checked;
-  if (on) layerFinds.addTo(map);
-}
+      const on = document.getElementById("toggleFinds").checked;
+      if (on) layerFinds.addTo(map);
+    }
 
     function rebuildIsodensity(points) {
       if (!points || points.length < 50) return;
@@ -677,12 +664,11 @@ document.getElementById("findOpacity").addEventListener("input", () => {
 
       const useLog = document.getElementById("toggleLog")?.checked;
 
-if (useLog) {
-  // log1p = log(1+v) : garde 0→0 et compresse les fortes densités
-  for (let i = 0; i < grid.length; i++) {
-    grid[i] = Math.log1p(grid[i]);
-  }
-}
+      if (useLog) {
+        for (let i = 0; i < grid.length; i++) {
+          grid[i] = Math.log1p(grid[i]);
+        }
+      }
 
       const maxV = grid.reduce((m, v) => Math.max(m, v), 0);
       const base = Math.max(1, maxV / 10);
@@ -711,30 +697,49 @@ if (useLog) {
     }
 
     // -------------------------------------------------------------------------
-    // Export PNG (via plugin)
+    // Export PNG (NOUVELLE MÉTHODE avec html2canvas)
     // -------------------------------------------------------------------------
     async function exportMapPNG() {
-      statEl.textContent = "Export PNG HD…";
+      statEl.textContent = "Export PNG HD en cours…";
 
       const mapDiv = document.getElementById("map");
+      const toolbar = document.querySelector(".toolbar");
+      
+      // Masquer la toolbar temporairement
+      toolbar.style.display = "none";
+
       const oldW = mapDiv.style.width;
       const oldH = mapDiv.style.height;
 
+      // Redimensionner pour export HD
       mapDiv.style.width = "3600px";
       mapDiv.style.height = "2400px";
-      map.invalidateSize(true)
-       updatePrintScale();                 // recalc l’échelle pour la nouvelle taille
-        await new Promise(r => requestAnimationFrame(r));
-        await new Promise(r => requestAnimationFrame(r)); // 2 frames = plus stable;
+      
+      map.invalidateSize(true);
+      updatePrintScale();
 
-      setTimeout(async () => {
-        try {
-          const blob = await screenshoter.takeScreen("blob", { format: "png", quality: 1 });
+      // Attendre que tout soit rendu (important pour Canvas)
+      await new Promise(r => setTimeout(r, 2000));
 
-          mapDiv.style.width = oldW;
-          mapDiv.style.height = oldH;
-          map.invalidateSize(true);
+      try {
+        const canvas = await html2canvas(mapDiv, {
+          useCORS: true,
+          allowTaint: true,
+          backgroundColor: "#ffffff",
+          scale: 1,
+          logging: false,
+          width: 3600,
+          height: 2400
+        });
 
+        // Restaurer les dimensions
+        mapDiv.style.width = oldW;
+        mapDiv.style.height = oldH;
+        map.invalidateSize(true);
+        toolbar.style.display = "block";
+
+        // Télécharger l'image
+        canvas.toBlob((blob) => {
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
           a.href = url;
@@ -745,15 +750,17 @@ if (useLog) {
           URL.revokeObjectURL(url);
 
           statEl.textContent = "PNG téléchargé (cmra_carte_hd.png).";
-        } catch (e) {
-          mapDiv.style.width = oldW;
-          mapDiv.style.height = oldH;
-          map.invalidateSize(true);
+        }, "image/png");
 
-          console.error(e);
-          statEl.textContent = "Export échoué (voir console).";
-        }
-      }, 900);
+      } catch (e) {
+        mapDiv.style.width = oldW;
+        mapDiv.style.height = oldH;
+        map.invalidateSize(true);
+        toolbar.style.display = "block";
+
+        console.error(e);
+        statEl.textContent = "Export échoué (voir console).";
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -767,17 +774,16 @@ if (useLog) {
       const points = parseCSV(text);
       cachedPoints = points;
 
-      // buildFindsLayer(points);
-
       const AUTO_FIT = false;
 
-if (AUTO_FIT && points.length) {
-  const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
-  map.fitBounds(bounds.pad(0.15));
-}
+      if (AUTO_FIT && points.length) {
+        const bounds = L.latLngBounds(points.map(p => [p.lat, p.lon]));
+        map.fitBounds(bounds.pad(0.15));
+      }
+
       drawHeat(points);
-buildFindsLayer(points);
-rebuildIsodensity(points);
+      buildFindsLayer(points);
+      rebuildIsodensity(points);
     }
 
     main().catch(err => {
