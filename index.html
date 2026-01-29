@@ -126,6 +126,10 @@
     }
 
     .print-title, .print-credit, .print-scale { backdrop-filter: blur(2px); }
+
+    #map .leaflet-paneFinds-pane {
+    pointer-events: none !important;
+}
   </style>
 </head>
 
@@ -235,7 +239,7 @@
     let cachedPoints = [];
     let layerFinds = null;
 
-    const findsRenderer = L.canvas({ padding: 0.5, pane: "paneFinds" });
+    const findsRenderer = L.canvas({ padding: 0.5, pane: "paneFinds", tolerance: 0 });
 
     const statEl = document.getElementById("stat");
 
