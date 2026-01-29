@@ -235,7 +235,7 @@
     let cachedPoints = [];
     let layerFinds = null;
 
-    const findsRenderer = L.canvas({ padding: 0.5 });
+    const findsRenderer = L.canvas({ padding: 0.5, pane: "paneFinds" });
 
     const statEl = document.getElementById("stat");
 
@@ -248,10 +248,10 @@
 // Panes Leaflet (ordre des calques)
 // -------------------------------------------------------------------------
 map.createPane("panePlaces");   // villes
-map.getPane("panePlaces").style.zIndex = 420;
+map.getPane("panePlaces").style.zIndex = 650;
 
 map.createPane("paneFinds");    // points bruts (découvertes)
-map.getPane("paneFinds").style.zIndex = 430; // AU-DESSUS des villes
+map.getPane("paneFinds").style.zIndex = 660; // AU-DESSUS des villes
 
     const hillshade = L.tileLayer(
       "https://corpus-argonne-fond.netlify.app/hillshade/{z}/{x}/{y}.png",
@@ -367,6 +367,7 @@ map.getPane("paneFinds").style.zIndex = 430; // AU-DESSUS des villes
             }
           },
           pointToLayer: (_feature, latlng) => L.circleMarker(latlng, {
+            pane: "panePlaces",
             radius: 3,             // taille du point
             fillColor: "#c2bcbc", // couleur de remplissage
             color: "#000",
